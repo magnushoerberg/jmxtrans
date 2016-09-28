@@ -27,8 +27,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.common.collect.ImmutableList;
 
 import com.googlecode.jmxtrans.model.OutputWriter;
-import com.googlecode.jmxtrans.model.OutputWriterAdapter;
-import com.googlecode.jmxtrans.model.OutputWriterFactory;
+import com.googlecode.jmxtrans.model.ValidationException;
 import com.googlecode.jmxtrans.model.Query;
 import com.googlecode.jmxtrans.model.Result;
 import com.googlecode.jmxtrans.model.Server;
@@ -44,7 +43,6 @@ import com.rabbitmq.client.Channel;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import lombok.ToString;
 
 /**
  * This low latency and thread safe output writer sends data to a host/port combination
@@ -53,67 +51,49 @@ import lombok.ToString;
  * @see <a href="http://https://www.rabbitmq.com/tutorials/tutorial-three-java.html">Publish to RabbitMQ</a>
  */
 
-@ToString
-public class RabbitMQWriter implements OutputWriterFactory {
-	private static final Logger log = LoggerFactory.getLogger(RabbitMQWriter.class);
+public class RabbitMQWriter extends BaseOutputWriter {
+    private static final Logger log = LoggerFactory.getLogger(RabbitMQWriter.class);
 
     private final String uri ;
-    private final ImmutableList<String> typeNames;
-    private final boolean booleanAsNumber;
-    private final boolean debug;
 
     @JsonCreator
     public RabbitMQWriter(
             @JsonProperty("uri") String uri,
             @JsonProperty("typeNames") ImmutableList<String> typeNames,
             @JsonProperty("booleanAsNumber") boolean booleanAsNumber,
+            @JsonProperty("settings") Map<String, Object> settings,
             @JsonProperty("debug") boolean debug) {
+        super(typeNames, booleanAsNumber, debug, settings);
         this.uri = uri;
-        this.typeNames = typeNames;
-        this.booleanAsNumber = booleanAsNumber;
-        this.debug = debug;
-        System.out.println(this.uri);
             }
 
-    @Override
-    public OutputWriter create() {
-        return new W(this.uri);
+    private Channel createChannel() throws Exception {
+        ConnectionFactory cf = new ConnectionFactory();
+        cf.setUri(this.uri);
+        Connection connection = cf.newConnection();
+        return connection.createChannel();
     }
 
-    public static class W extends OutputWriterAdapter {
-        private final String uri;
+    @Override
+    public void validateSetup(Server server, Query query) throws ValidationException {}
 
-        public W (String uri) {
-            this.uri = uri;
-        }
+    @Override
+    protected void internalWrite(Server server, Query query, ImmutableList<Result> results) throws Exception {
+        // Iterating through the list of query results
+        Channel pubChan = createChannel();
 
-        private Channel createChannel() throws Exception {
-            ConnectionFactory cf = new ConnectionFactory();
-            cf.setUri(this.uri);
-            Connection connection = cf.newConnection();
-            return connection.createChannel();
-        }
-
-        @Override
-        public void doWrite(Server server, Query query, Iterable<Result> results) throws Exception {
-            // Iterating through the list of query results
-            Channel pubChan = createChannel();
-
-            for (Result result : results) {
-                System.out.println(result);
-                //Map<String, Object> resultValues = result.getValues();
-                //for (Map.Entry<String, Object> values : resultValues.entrySet()) {
-                    //Object value = values.getValue();
-                    //String rk = "";
-                    //if (result.getAttributeName().equals(values.getKey())) {
-                        //rk = result.getAttributeName();
-                    //} else {
-                        //rk = result.getAttributeName() + "_" + values.getKey();
-                    //}
-                    //pubChan.basicPublish("amq.topic", rk, null, value.toString().getBytes());
-                //}
+        for (Result result : results) {
+            Map<String, Object> resultValues = result.getValues();
+            for (Map.Entry<String, Object> values : resultValues.entrySet()) {
+                Object value = values.getValue();
+                String rk = "";
+                if (result.getAttributeName().equals(values.getKey())) {
+                    rk = result.getAttributeName();
+                } else {
+                    rk = result.getAttributeName() + "_" + values.getKey();
+                }
+                pubChan.basicPublish("amq.topic", rk, null, value.toString().getBytes());
             }
         }
-
     }
 }
